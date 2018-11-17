@@ -42,6 +42,8 @@ public class HomeOfficeMinigame:MonoBehaviour {
 	}
 
 	public static void DisableMinigame() {
+		GameManager.cash += 20;
+		GameManager.energy -= 10;
 		me.gameObject.SetActive(false);
 	}
 }

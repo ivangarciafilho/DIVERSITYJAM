@@ -52,6 +52,8 @@ public class ShowerMinigame:MonoBehaviour {
 	}
 
 	public static void DisableMinigame() {
+		GameManager.energy += 20;
+		GameManager.cash -= 10;
 		me.gameObject.SetActive(false);
 	}
 }

@@ -23,10 +23,10 @@ public class ProtagonistMovement : MonoBehaviour
         newPosition.z = (Input.GetAxis("Vertical") * smoothing);
 
         transform.position += newPosition;
-        var clampedPosition = transform.position;
-        clampedPosition.x = Mathf.Clamp(clampedPosition.x, playableAreaWidth.x, playableAreaWidth.y);
-        clampedPosition.z = Mathf.Clamp(clampedPosition.z, playableAreaDepth.x, playableAreaDepth.y);
-        transform.position = clampedPosition;
+        //var clampedPosition = transform.position;
+        //clampedPosition.x = Mathf.Clamp(clampedPosition.x, playableAreaWidth.x, playableAreaWidth.y);
+        //clampedPosition.z = Mathf.Clamp(clampedPosition.z, playableAreaDepth.x, playableAreaDepth.y);
+        //transform.position = clampedPosition;
 
         //if (newPosition.x == 0 && newPosition.z == 0)
         //{

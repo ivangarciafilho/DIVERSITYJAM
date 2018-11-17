@@ -12,6 +12,7 @@ public abstract class Minigame:MonoBehaviour {
 	protected virtual void Disable() { }
 
 	void OnEnable() {
+		transform.position = Vector3.zero;
 		won = false;
 		if (GameManager.cash+cash < 0 || GameManager.energy+energy < 0) {
 			gameObject.SetActive(false);

@@ -12,7 +12,7 @@ public class CursorMovement:MonoBehaviour {
 	public float shakeProgress = 0;
 	public float shakeMultiplier = 1;
 	
-	Transform tr;
+	public Transform tr { get; private set; }
 	HashSet<Collider2D> colliders;
 	bool colliding => colliders.Count > 0;
 

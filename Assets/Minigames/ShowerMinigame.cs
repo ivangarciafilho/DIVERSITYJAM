@@ -2,9 +2,10 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class ShowerMinigame:MonoBehaviour {
-	static ShowerMinigame me;
-
+public class ShowerMinigame:Minigame {
+	public override int cash => -10;
+	public override int energy => 20;
+	
 	public CursorMovement cursor;
 	public Transform arm;
 	public Transform progress;
@@ -12,21 +13,20 @@ public class ShowerMinigame:MonoBehaviour {
 	public Texture2D[] waterTex;
 	
 	float endTempo;
-
+	
 	Vector2 origin;
 	Vector3 progressSize;
 
 	void Awake() {
-		me = this;
 		origin = arm.localPosition;
 		progressSize = progress.localScale;
 	}
-
-	void OnEnable() {
+	
+	protected override void Enable() {
 		endTempo = 2;
 		progress.localScale = new Vector3(0,progressSize.y,progressSize.z);
 	}
-
+	
 	void Update() {
 		var c = cursor.position;
 		var vector = c-origin;
@@ -43,17 +43,7 @@ public class ShowerMinigame:MonoBehaviour {
 			float y = Mathf.Lerp(progress.localScale.y,0,Time.deltaTime*10);
 			progress.localScale = new Vector3(progress.localScale.x,y,progress.localScale.z);
 			endTempo -= Time.deltaTime;
-			if (endTempo <= 0) DisableMinigame();
+			if (endTempo <= 0) WinMinigame();
 		}
-	}
-
-	public static void EnableMinigame() {
-		me.gameObject.SetActive(true);
-	}
-
-	public static void DisableMinigame() {
-		GameManager.energy += 20;
-		GameManager.cash -= 10;
-		me.gameObject.SetActive(false);
 	}
 }

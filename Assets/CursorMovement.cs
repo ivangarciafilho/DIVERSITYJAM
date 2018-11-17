@@ -3,7 +3,11 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class CursorMovement:MonoBehaviour {
-	public Vector2 position => tr.position;
+	public Camera cam;
+	public Vector2 position {
+		get => tr.localPosition;
+		set => tr.localPosition = new Vector3(value.x,value.y,tr.localPosition.z);
+	}
 	public bool complete => Mathf.Approximately(shakeProgress,1);
 	public float shakeProgress = 0;
 	public float shakeMultiplier = 1;
@@ -20,11 +24,12 @@ public class CursorMovement:MonoBehaviour {
 	}
 
 	void Update() {
-		var delta = new Vector2(Input.GetAxisRaw("Mouse X"),Input.GetAxisRaw("Mouse Y"))*.2f;
-		tr.localPosition = new Vector3(tr.localPosition.x+delta.x,tr.localPosition.y+delta.y,tr.localPosition.z);
-		if (!complete && colliding) {
-			float m = Mathf.Min(delta.magnitude,.18f*shakeMultiplier);
-			if (!Mathf.Approximately(m,0)) {
+		Vector2 newPos = cam.ScreenToWorldPoint(Input.mousePosition);
+		var delta = newPos-position;
+		if (delta != Vector2.zero) {
+			position = newPos;
+			if (!complete && colliding) {
+				float m = Mathf.Min(delta.magnitude,.18f*shakeMultiplier);
 				shakeProgress += Time.deltaTime*m*shakeMultiplier;
 				if (shakeProgress > 1) shakeProgress = 1;
 			}

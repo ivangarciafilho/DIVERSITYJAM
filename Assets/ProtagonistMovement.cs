@@ -4,6 +4,7 @@ using UnityEngine;
 
 public class ProtagonistMovement : MonoBehaviour
 {
+    public Rigidbody itsRigidbody;
     public Vector2 playableAreaWidth;
     public Vector2 playableAreaDepth;
     private int walkingAnimationHash;
@@ -16,13 +17,13 @@ public class ProtagonistMovement : MonoBehaviour
     //}
 
     // Update is called once per frame
-    void Update()
+    void FixedUpdate()
     {
         var smoothing = speed * Time.smoothDeltaTime;
         newPosition.x = (Input.GetAxis("Horizontal") * smoothing);
         newPosition.z = (Input.GetAxis("Vertical") * smoothing);
 
-        transform.position += newPosition;
+        itsRigidbody.MovePosition (transform.position + newPosition);
         //var clampedPosition = transform.position;
         //clampedPosition.x = Mathf.Clamp(clampedPosition.x, playableAreaWidth.x, playableAreaWidth.y);
         //clampedPosition.z = Mathf.Clamp(clampedPosition.z, playableAreaDepth.x, playableAreaDepth.y);

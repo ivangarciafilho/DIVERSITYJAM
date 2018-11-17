@@ -9,35 +9,29 @@ public class HomeOfficeMinigame:MonoBehaviour {
 	public Renderer content;
 	public Texture2D[] contents;
 
+	Vector3 size;
+	
 	float endTempo;
 	float endPulse;
-	
-	Vector3 cursorSize;
 
 	void Awake() {
 		me = this;
-		Restart();
+		size = content.transform.localScale;
 	}
 
-	void Start() {
-		cursorSize = cursor.tr.localScale;
-	}
-
-	void Restart() {
+	void OnEnable() {
 		content.material.mainTexture = contents[Mathf.Clamp((int)(Random.value*contents.Length),0,contents.Length-1)];
 		endTempo = 2;
 		endPulse = 1;
-		cursor.tr.localScale = cursorSize;
 		content.material.SetFloat("_Cutoff",1);
-		cursor.Restart();
+		content.transform.localScale = size;
 	}
 	
 	void Update() {
 		content.material.SetFloat("_Cutoff",1-cursor.shakeProgress);
 		if (cursor.shakeComplete) {
 			endPulse = Mathf.Lerp(endPulse,0,Time.deltaTime*10);
-			content.transform.localScale = Vector3.one*(1+.05f*endPulse);
-			cursor.tr.localScale = Vector3.Lerp(cursor.tr.localScale,Vector3.zero,Time.deltaTime*10);
+			content.transform.localScale = size*(1+.05f*endPulse);
 			endTempo -= Time.deltaTime;
 			if (endTempo <= 0) DisableMinigame();
 		}
@@ -45,7 +39,6 @@ public class HomeOfficeMinigame:MonoBehaviour {
 	
 	public static void EnableMinigame() {
 		me.gameObject.SetActive(true);
-		me.Restart();
 	}
 
 	public static void DisableMinigame() {

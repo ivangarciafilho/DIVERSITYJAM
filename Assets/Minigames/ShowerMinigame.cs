@@ -11,24 +11,20 @@ public class ShowerMinigame:MonoBehaviour {
 	public Renderer water;
 	public Texture2D[] waterTex;
 	
-	Vector2 origin;
-	float progressWidth;
 	float endTempo;
 
+	Vector2 origin;
 	Vector3 progressSize;
 
 	void Awake() {
 		me = this;
+		origin = arm.localPosition;
 		progressSize = progress.localScale;
-		Restart();
 	}
 
-	void Restart() {
-		origin = arm.localPosition;
-		progressWidth = progress.localScale.x;
+	void OnEnable() {
 		endTempo = 2;
-		progress.localScale = progressSize;
-		cursor.Restart();
+		progress.localScale = new Vector3(0,progressSize.y,progressSize.z);
 	}
 
 	void Update() {
@@ -40,8 +36,8 @@ public class ShowerMinigame:MonoBehaviour {
 		if (!Mathf.Approximately(magnitude,0)) {
 			arm.localEulerAngles = new Vector3(0,0,Mathf.Rad2Deg*Mathf.Atan2(vector.y,vector.x));
 		}
-		progress.localScale = new Vector3(progressWidth*cursor.shakeProgress,progress.localScale.y,progress.localScale.z);
-		progress.localPosition = new Vector3(-progressWidth*.5f*(1-cursor.shakeProgress),progress.localPosition.y,progress.localPosition.z);
+		progress.localScale = new Vector3(progressSize.x*cursor.shakeProgress,progress.localScale.y,progress.localScale.z);
+		progress.localPosition = new Vector3(-progressSize.x*.5f*(1-cursor.shakeProgress),progress.localPosition.y,progress.localPosition.z);
 		water.material.mainTexture = waterTex[Mathf.Clamp((int)(Time.time*6)%waterTex.Length,0,waterTex.Length-1)];
 		if (cursor.shakeComplete) {
 			float y = Mathf.Lerp(progress.localScale.y,0,Time.deltaTime*10);
@@ -53,7 +49,6 @@ public class ShowerMinigame:MonoBehaviour {
 
 	public static void EnableMinigame() {
 		me.gameObject.SetActive(true);
-		me.Restart();
 	}
 
 	public static void DisableMinigame() {

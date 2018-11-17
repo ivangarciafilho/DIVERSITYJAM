@@ -3594,21 +3594,6 @@ PrefabInstance:
       propertyPath: m_Name
       value: homeOffice
       objectReference: {fileID: 0}
-    - target: {fileID: 7251665471359845599, guid: 6441f147427164151a8d4bd85ff6cf5f,
-        type: 3}
-      propertyPath: m_LocalScale.x
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 7251665471359845599, guid: 6441f147427164151a8d4bd85ff6cf5f,
-        type: 3}
-      propertyPath: m_LocalScale.y
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 7251665471359845599, guid: 6441f147427164151a8d4bd85ff6cf5f,
-        type: 3}
-      propertyPath: m_LocalScale.z
-      value: 1
-      objectReference: {fileID: 0}
     - target: {fileID: 7251665471359845594, guid: 6441f147427164151a8d4bd85ff6cf5f,
         type: 3}
       propertyPath: m_IsActive

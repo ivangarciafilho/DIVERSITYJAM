@@ -16,14 +16,13 @@ public class CursorMovement:MonoBehaviour {
 	HashSet<Collider2D> colliders;
 	bool colliding => colliders.Count > 0;
 
-	void Start() {
+	void Awake() {
 		tr = transform;
 		shakeProgress = 0;
-		shakeMultiplier = 1;
 		colliders = new HashSet<Collider2D>();
 	}
 	
-	public void Restart() {
+	void OnEnable() {
 		shakeProgress = 0;
 		position = mousePosition;
 	}

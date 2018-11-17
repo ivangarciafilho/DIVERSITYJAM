@@ -4,17 +4,16 @@ using UnityEngine;
 
 public class ProtagonistMovement : MonoBehaviour
 {
-    public Animator itsAnimator;
     public Vector2 playableAreaWidth;
     public Vector2 playableAreaDepth;
     private int walkingAnimationHash;
     Vector3 newPosition = new Vector3();
     [SerializeField]float speed = 3f;
 
-    private void Awake()
-    {
-        walkingAnimationHash = Animator.StringToHash("Walking");
-    }
+    //private void Awake()
+    //{
+    //    walkingAnimationHash = Animator.StringToHash("Walking");
+    //}
 
     // Update is called once per frame
     void Update()
@@ -29,13 +28,13 @@ public class ProtagonistMovement : MonoBehaviour
         clampedPosition.z = Mathf.Clamp(clampedPosition.z, playableAreaDepth.x, playableAreaDepth.y);
         transform.position = clampedPosition;
 
-        if (newPosition.x == 0 && newPosition.z == 0)
-        {
-            itsAnimator.SetBool(walkingAnimationHash, false);
-        }
-        else
-        {
-            itsAnimator.SetBool(walkingAnimationHash, true);
-        }
+        //if (newPosition.x == 0 && newPosition.z == 0)
+        //{
+        //    itsAnimator.SetBool(walkingAnimationHash, false);
+        //}
+        //else
+        //{
+        //    itsAnimator.SetBool(walkingAnimationHash, true);
+        //}
     }
 }

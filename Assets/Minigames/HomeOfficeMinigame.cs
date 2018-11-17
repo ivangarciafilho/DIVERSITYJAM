@@ -2,8 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class HomeOfficeMinigame:MonoBehaviour {
-	static HomeOfficeMinigame me;
+public class HomeOfficeMinigame:Minigame {
+	public override int cash => 20;
+	public override int energy => -10;
 
 	public CursorMovement cursor;
 	public Renderer content;
@@ -15,35 +16,24 @@ public class HomeOfficeMinigame:MonoBehaviour {
 	float endPulse;
 
 	void Awake() {
-		me = this;
 		size = content.transform.localScale;
 	}
-
-	void OnEnable() {
+	
+	protected override void Enable() {
 		content.material.mainTexture = contents[Mathf.Clamp((int)(Random.value*contents.Length),0,contents.Length-1)];
 		endTempo = 2;
 		endPulse = 1;
 		content.material.SetFloat("_Cutoff",1);
 		content.transform.localScale = size;
 	}
-	
+
 	void Update() {
 		content.material.SetFloat("_Cutoff",1-cursor.shakeProgress);
 		if (cursor.shakeComplete) {
 			endPulse = Mathf.Lerp(endPulse,0,Time.deltaTime*10);
 			content.transform.localScale = size*(1+.05f*endPulse);
 			endTempo -= Time.deltaTime;
-			if (endTempo <= 0) DisableMinigame();
+			if (endTempo <= 0) WinMinigame();
 		}
-	}
-	
-	public static void EnableMinigame() {
-		me.gameObject.SetActive(true);
-	}
-
-	public static void DisableMinigame() {
-		GameManager.cash += 20;
-		GameManager.energy -= 10;
-		me.gameObject.SetActive(false);
 	}
 }

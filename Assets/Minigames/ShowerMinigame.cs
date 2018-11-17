@@ -15,8 +15,11 @@ public class ShowerMinigame:MonoBehaviour {
 	float progressWidth;
 	float endTempo;
 
+	Vector3 progressSize;
+
 	void Awake() {
 		me = this;
+		progressSize = progress.localScale;
 		Restart();
 	}
 
@@ -24,6 +27,8 @@ public class ShowerMinigame:MonoBehaviour {
 		origin = arm.localPosition;
 		progressWidth = progress.localScale.x;
 		endTempo = 2;
+		progress.localScale = progressSize;
+		cursor.Restart();
 	}
 
 	void Update() {
@@ -38,7 +43,7 @@ public class ShowerMinigame:MonoBehaviour {
 		progress.localScale = new Vector3(progressWidth*cursor.shakeProgress,progress.localScale.y,progress.localScale.z);
 		progress.localPosition = new Vector3(-progressWidth*.5f*(1-cursor.shakeProgress),progress.localPosition.y,progress.localPosition.z);
 		water.material.mainTexture = waterTex[Mathf.Clamp((int)(Time.time*6)%waterTex.Length,0,waterTex.Length-1)];
-		if (cursor.complete) {
+		if (cursor.shakeComplete) {
 			float y = Mathf.Lerp(progress.localScale.y,0,Time.deltaTime*10);
 			progress.localScale = new Vector3(progress.localScale.x,y,progress.localScale.z);
 			endTempo -= Time.deltaTime;

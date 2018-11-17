@@ -11,21 +11,30 @@ public class HomeOfficeMinigame:MonoBehaviour {
 
 	float endTempo;
 	float endPulse;
+	
+	Vector3 cursorSize;
 
 	void Awake() {
 		me = this;
 		Restart();
 	}
 
+	void Start() {
+		cursorSize = cursor.tr.localScale;
+	}
+
 	void Restart() {
 		content.material.mainTexture = contents[Mathf.Clamp((int)(Random.value*contents.Length),0,contents.Length-1)];
 		endTempo = 2;
 		endPulse = 1;
+		cursor.tr.localScale = cursorSize;
+		content.material.SetFloat("_Cutoff",1);
+		cursor.Restart();
 	}
 	
 	void Update() {
 		content.material.SetFloat("_Cutoff",1-cursor.shakeProgress);
-		if (cursor.complete) {
+		if (cursor.shakeComplete) {
 			endPulse = Mathf.Lerp(endPulse,0,Time.deltaTime*10);
 			content.transform.localScale = Vector3.one*(1+.05f*endPulse);
 			cursor.tr.localScale = Vector3.Lerp(cursor.tr.localScale,Vector3.zero,Time.deltaTime*10);

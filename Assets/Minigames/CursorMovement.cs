@@ -8,7 +8,7 @@ public class CursorMovement:MonoBehaviour {
 		get => tr.localPosition;
 		set => tr.localPosition = new Vector3(value.x,value.y,tr.localPosition.z);
 	}
-	public bool complete => Mathf.Approximately(shakeProgress,1);
+	public bool shakeComplete => Mathf.Approximately(shakeProgress,1);
 	public float shakeProgress = 0;
 	public float shakeMultiplier = 1;
 	
@@ -22,19 +22,26 @@ public class CursorMovement:MonoBehaviour {
 		shakeMultiplier = 1;
 		colliders = new HashSet<Collider2D>();
 	}
+	
+	public void Restart() {
+		shakeProgress = 0;
+		position = mousePosition;
+	}
 
 	void Update() {
-		Vector2 newPos = cam.ScreenToWorldPoint(Input.mousePosition);
+		var newPos = mousePosition;
 		var delta = newPos-position;
 		if (delta != Vector2.zero) {
 			position = newPos;
-			if (!complete && colliding) {
+			if (!shakeComplete && colliding) {
 				float m = Mathf.Min(delta.magnitude,.18f*shakeMultiplier);
 				shakeProgress += Time.deltaTime*m*shakeMultiplier;
 				if (shakeProgress > 1) shakeProgress = 1;
 			}
 		}
 	}
+
+	Vector2 mousePosition => cam.ScreenToWorldPoint(Input.mousePosition);
 
 	void OnTriggerEnter2D(Collider2D collision) => colliders.Add(collision);
 	void OnTriggerStay2D(Collider2D collision) => colliders.Add(collision);

@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Runtime.InteropServices.WindowsRuntime;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -17,11 +18,13 @@ public class FireEventOnKeyDown : MonoBehaviour
 
     private void Update()
     {
+        if (fireOnce && alreadyTriggered) return;
+
         if (Input.GetKeyDown(triggeringKey))
+        {
             triggeredEvents.Invoke();
+            alreadyTriggered = true;
+        }
 
-        alreadyTriggered = true;
-
-        if (fireOnce) enabled = false;
     }
 }

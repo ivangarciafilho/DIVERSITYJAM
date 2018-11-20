@@ -17,11 +17,24 @@ public class ProtagonistMovement : MonoBehaviour
     //}
 
     // Update is called once per frame
+    private Vector3 leftMirror = new Vector3(-1,1f,1f);
+    private Vector3 rightMirror = new Vector3(1,1f,1f);
     void FixedUpdate()
     {
         var smoothing = speed * Time.smoothDeltaTime;
         newPosition.x = (Input.GetAxis("Horizontal") * smoothing);
         newPosition.z = (Input.GetAxis("Vertical") * smoothing);
+        if (newPosition.x !=  0)
+        {
+            if (newPosition.x < 0 )
+            {
+                transform.localScale = leftMirror;
+            }
+            else
+            {
+                transform.localScale = rightMirror;
+            }
+        }
 
         itsRigidbody.MovePosition (transform.position + newPosition);
         //var clampedPosition = transform.position;

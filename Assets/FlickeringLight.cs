@@ -31,7 +31,7 @@ public class FlickeringLight : MonoBehaviour
         {
             itsLight.intensity = Random.Range(defaultIntensity*0.75f, defaultIntensity*1.25f);
 
-            yield return new WaitForSeconds(Random.Range(0.5f,2f));
+            yield return new WaitForSeconds(Random.Range(0.05f,0.5f));
         }
     }
 
@@ -42,7 +42,7 @@ public class FlickeringLight : MonoBehaviour
         {
             itsLight.spotAngle = Random.Range(defaultAngle * 0.75f, defaultAngle * 1.25f);
 
-            yield return new WaitForSeconds(Random.Range(0.5f, 2f));
+            yield return new WaitForSeconds(Random.Range(0.05f, 0.5f));
         }
     }
 
@@ -52,7 +52,7 @@ public class FlickeringLight : MonoBehaviour
         {
             itsLight.transform.position = defaultPosition+(Random.onUnitSphere*(Random.Range(0.01f,0.03f)));
 
-            yield return new WaitForSeconds(Random.Range(0.2f, 1f));
+            yield return new WaitForSeconds(Random.Range(0.05f, 0.5f));
         }
     }
 }

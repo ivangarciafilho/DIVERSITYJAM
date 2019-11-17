@@ -1,0 +1,45 @@
+Lux Plus Version 2.02j
+ # Standard Metallic: Fixed the "fix" for Lux_DiffuseAndSpecularFromMetallic (LuxInputs.cginc) which was a bug.
+
+
+Lux Plus Version 2.02i
+# Lux Plus standard shaders
+ - Fixed: detailBlendState
+ - Standard Metallic: Fixed Lux_DiffuseAndSpecularFromMetallic (LuxInputs.cginc)
+ - Smoothness input selector added (taken from specular/metal mask or albedo)
+# Parallax and mixmapping
+ - In case you use vertex color red as input the mixmapping result is less sharpened now.
+# POM
+ - In case you use vertex color red as input the mixmapping result is sharpened in the final search now.
+ - Fixed: POM now sets lux.mixmapValue = half2(lux.vertexColor.r, 1.0 - lux.vertexColor.r); in case you do not use a texture mask.
+ - Linear Steps changed to proper int slider.
+# Dynamic Weather
+ - Custom snow mask is now applied before the detail masks and sharpening resulting in a much more believable result.
+
+Lux Plus Version 2.02h
+# Lux Plus Standard shader: Emission fixed for Unity > 5.6.x.
+
+Lux Plus Version 2.02g
+# Lux Plus Deferred Reflection shader: Error in Unity 5.6.6 fixed.
+
+Lux Plus Version 2.02f
+# Lux Plus Standard shader: Shadow caster pass and instancing fixed.
+
+Lux Plus Version 2.02e
+# Hotfix for Unity 2017 added.
+
+Lux Plus Version 2.02d
+# Basic support for Unity 2018 added.
+# Fixed skin and anisotropic shading on Metal and OpenGLCore in Unity 2018.
+# Skin wrinkle maps shader added.
+# Support for Advanced Terrain Grass lighting added.
+
+
+Lux Plus Version 2.02c
+# Instancing and render queue fields added to Lux standard shader GUI
+# Tessellation slightly reworked: Now you can specify the desired tessellation factor which gets clamped by the edge length limit.
+# Global snow normals fixed for custom surface shaders.
+# Fixed missing melting snow to water feature on simple terrain shader example.
+
+KNOWN ISSUES
+# Custom Surface Shaders: When using Global snow mapping and diffuse scattering, the normal which is used to calculate the scattering does not contain the snow normal. It will be replaced by a flat normal - which is better than using the wrong underlying normal.

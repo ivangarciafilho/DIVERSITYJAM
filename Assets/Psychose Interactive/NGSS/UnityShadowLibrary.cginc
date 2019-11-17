@@ -8,7 +8,8 @@
 	#define HANDLE_SHADOWS_BLENDING_IN_GI 1
 #endif
 
-#if (UNITY_VERSION >= 2017)
+#if (UNITY_VERSION < 2017)
+#else
 #define unityShadowCoord float
 #define unityShadowCoord2 float2
 #define unityShadowCoord3 float3
@@ -23,26 +24,61 @@ float3  UnityGetReceiverPlaneDepthBias(float3 shadowCoord, float biasbiasMultipl
 
 //NGSS START --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// Note: Change only the values of these defines. Don't comment/uncomment anything or you risk shader compile errors!
+// Note: Only for Advanced users! Change only DEFINE values based on it's right side explanation. Don't comment/uncomment defines or uniforms that contains values, or you'll risk shader compile errors!
 
 //Samplers per frag
-#define NGSS_FILTER_SAMPLERS 48										//Used for the final filtering of shadows. Recommended values: Mobile = 16, Consoles = 24, Desktop VR = 32, Desktop High = 64, Desktop Ultra 128
-#define NGSS_TEST_SAMPLERS 16										//Used to test blocker and early bail out algorithms. This value should always be at least half Filter_Samplers count or you will slow down the algorithm
-#define NGSS_SCALE_SAMPLERS_OVER_RADIUS							//Used to reduce samplers over kernel size. Can introduce artifacts if softness is too high (spot lights)
+//#define NGSS_FILTER_SAMPLERS 48									//Used for the final filtering of shadows. Recommended values: Mobile = 16, Consoles = 24, Desktop VR = 32, Desktop High = 48, Desktop Ultra 64
+//#define NGSS_TEST_SAMPLERS 16										//Used to test blocker and early bail out algorithms. This value should never go beyond half Filter_Samplers count or you will slow down the algorithm
+uniform int NGSS_TEST_SAMPLERS = 16;
+uniform int NGSS_FILTER_SAMPLERS = 32;
 
-//Bias Fade
-#define NGSS_USE_BIAS_FADE
+uniform float NGSS_GLOBAL_OPACITY = 0.0;
+#define NGSS_GLOBAL_OPACITY_DEFINED
+
+//Optimizations
+//#define NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
+
+//Noise
+//#define NGSS_SHADOWS_DITHERING									//Improve noise by stabilizing patterns over a screen space grid
+//#define NGSS_BANDING_TO_NOISE_RATIO 1.0							//Defines the amount of banding to noise ratio, if 1 = 100% noise, if 0 = 100 banding
+uniform float NGSS_NOISE_TO_DITHERING_SCALE = 0;
+uniform float NGSS_BANDING_TO_NOISE_RATIO = 1.0;
+
+//Bias
+//#define NGSS_USE_SLOPE_BIAS										//Currently only works with Spot shadows. Need a way to implement something similar to Point shadows
 #define NGSS_BIAS_FADE 0.015
+#define NGSS_BIAS_SCALE 1.0											//Defines the scale of the Slope Based Bias algorithm (If 1.0 == 100%)
 
-#define NGSS_PCSS_FILTER_POINT_MIN 0.025 							//Close to blocker (If 0.0 == Hard Shadows). This value cannot be higher than NGSS_PCSS_FILTER_POINT_MAX
-#define NGSS_PCSS_FILTER_POINT_MAX 1.0 								//Far from blocker (If 1.0 == Soft Shadows). This value cannot be smaller than NGSS_PCSS_FILTER_POINT_MIN
+uniform float NGSS_PCSS_FILTER_LOCAL_MIN = 0.0125; 					//Close to blocker (If 0.0 == Hard Shadows). This value cannot be higher than NGSS_PCSS_FILTER_LOCAL_MAX
+uniform float NGSS_PCSS_FILTER_LOCAL_MAX = 1.0; 					//Far from blocker (If 1.0 == Soft Shadows). This value cannot be smaller than NGSS_PCSS_FILTER_LOCAL_MIN
+//uniform float NGSS_PCSS_LOCAL_BLOCKER_BIAS = 0.0;					//Allows to define an extra bias only on the blocker search algorithm
 
 uniform sampler2D unity_RandomRotation16;
+#define NGSS_PCSS_RANDOM_ROTATED_TEXTURE_DEFINED
 
+//uniform sampler2D _BlueNoiseTexture;
+//uniform float4 _BlueNoiseTexture_TexelSize;
+/*
+Defines names 			Target platforms
+SHADER_API_D3D11 		Direct3D 11
+SHADER_API_GLCORE 		Desktop OpenGL “core” (GL 3/4)
+SHADER_API_GLES 		OpenGL ES 2.0
+SHADER_API_GLES3 		OpenGL ES 3.0/3.1
+SHADER_API_METAL 		iOS/Mac Metal
+SHADER_API_VULKAN 		Vulkan
+SHADER_API_D3D11_9X 	Direct3D 11 “feature level 9.x” target for Universal Windows Platform
+SHADER_API_PS4 			PlayStation 4. SHADER_API_PSSL is also defined
+SHADER_API_XBOXONE
+SHADER_API_MOBILE 		all general mobile platforms (GLES, GLES3, METAL)
+*/
 //NGSS SUPPORT
 #if (SHADER_TARGET < 30 || defined(SHADER_API_D3D9) || defined(SHADER_API_GLES) || defined(SHADER_API_PSP2) || defined(SHADER_API_N3DS))
-    #define NO_NGSS_SUPPORT
+    #define NGSS_NO_SUPPORT
+#else
+	#define NGSS_SUPPORT_LOCAL
 #endif
+
+#define ditherPatternLocal float4x4(0.0,0.5,0.125,0.625, 0.75,0.22,0.875,0.375, 0.1875,0.6875,0.0625,0.5625, 0.9375,0.4375,0.8125,0.3125)
 
 float LocalRand01(float3 seed)
 {
@@ -57,7 +93,7 @@ int LocalRandInt(float3 seed, int maxInt)
 
 float3 LocalRandDir(float3 seed)
 {
-	return frac(cross(seed, float3(0.6711056f, 0.583715f, 0.983751f)) * 43758.5453);
+	return lerp((0).xxx, frac(cross(seed, float3(0.6711056f, 0.583715f, 0.983751f)) * 43758.5453), NGSS_BANDING_TO_NOISE_RATIO);	
 }
 
 float2 VogelDiskSample(int sampleIndex, int samplesCount, float phi)
@@ -73,14 +109,87 @@ float2 VogelDiskSample(int sampleIndex, int samplesCount, float phi)
 	
 	return float2(r * cosine, r * sine);
 }
+
+uniform sampler2D _BlueNoiseTexture;
+uniform float4 _BlueNoiseTexture_TexelSize;
+
 //the result of this multiply by 2pi and give it as param to VogelDiskSample then add the resulting coords to original sample coords
 float InterleavedGradientNoise(float2 position_screen)
 {
-	float2 magic = float2(
-        23.14069263277926, // e^pi (Gelfond's constant)
-         2.665144142690225 // 2^sqrt(2) (Gelfondâ€“Schneider constant)
-    );
-    return frac(cos(dot(position_screen, magic)) * 12345.6789);
+	//DITHERING
+	float ditherValue = ditherPatternLocal[position_screen.x * _ScreenParams.x % 4][position_screen.y * _ScreenParams.y % 4];
+	
+	//WHITE NOISE
+	//float2 spos = tex2D(unity_RandomRotation16, position_screen.xy).xy;
+	//float2 magic = float2(
+        //23.14069263277926, // e^pi (Gelfond's constant)
+         //2.665144142690225 // 2^sqrt(2) (Gelfondâ€“Schneider constant)
+    //);
+	//float noiseValue = frac(cos(dot(spos, magic)) * 12345.6789);
+	
+	//BLUE NOISE
+	float noiseValue = tex2D(_BlueNoiseTexture, position_screen.xy * _BlueNoiseTexture_TexelSize.xy * _ScreenParams.xy).r;
+	
+    return lerp(noiseValue, ditherValue, NGSS_NOISE_TO_DITHERING_SCALE);	
+}
+
+// Derivatives of light-space depth with respect to texture coordinates (nVIDIA)
+float2 DepthGradient(float2 uv, float z)
+{
+	float2 dz_duv = 0;
+#if defined(NGSS_USE_SLOPE_BIAS)
+	float3 duvdist_dx = ddx(float3(uv,z));
+	float3 duvdist_dy = ddy(float3(uv,z));
+
+	dz_duv.x = duvdist_dy.y * duvdist_dx.z;
+	dz_duv.x -= duvdist_dx.y * duvdist_dy.z;
+
+	dz_duv.y = duvdist_dx.x * duvdist_dy.z;
+	dz_duv.y -= duvdist_dy.x * duvdist_dx.z;
+
+	dz_duv /= (duvdist_dx.x * duvdist_dy.y) - (duvdist_dx.y * duvdist_dy.x);
+#endif
+	return dz_duv;
+}
+//Isidoro Slope Bias Method (AMD)
+float2 SlopeBasedBias(float3 projCoords)
+{
+	float2 dz_duv = 0;
+#if defined(NGSS_USE_SLOPE_BIAS)
+	//Packing derivatives of u,v, and distance to light source w.r.t. screen space x, and y
+	float3 duvdist_dx = ddx(projCoords);
+	float3 duvdist_dy = ddy(projCoords);
+	//Invert texture Jacobian and use chain rule to compute ddist/du and ddist/dv
+	//  |ddist/du| = |du/dx  du/dy|-T  * |ddist/dx|
+	//  |ddist/dv|   |dv/dx  dv/dy|      |ddist/dy|
+	//Multiply ddist/dx and ddist/dy by inverse transpose of Jacobian
+	float invDet = 1.0 / ((duvdist_dx.x * duvdist_dy.y) - (duvdist_dx.y * duvdist_dy.x));//NGSS_BIAS_SCALE = Bias multiply	
+	
+	//Top row of 2x2
+	dz_duv.x = duvdist_dy.y * duvdist_dx.z; // invJtrans[0][0] * ddist_dx
+	dz_duv.x -= duvdist_dx.y * duvdist_dy.z; // invJtrans[0][1] * ddist_dy
+	//Bottom row of 2x2
+	dz_duv.y = duvdist_dx.x * duvdist_dy.z; // invJtrans[1][1] * ddist_dy
+	dz_duv.y -= duvdist_dy.x * duvdist_dx.z; // invJtrans[1][0] * ddist_dx
+	dz_duv *= invDet;// * (1 - _LightShadowData.g);//* NGSS_BIAS_SCALE;
+#endif
+	return dz_duv;
+}
+// Derivatives of light-space depth with respect to texture coordinates (nVIDIA)
+float SlopeBasedBiasCombine(float z0, float2 dz_duv, float2 offset)
+{
+//we need a way to define this before we get here
+#if defined(SHADOWMAPSAMPLER_AND_TEXELSIZE_DEFINED)
+	// Static depth biasing to make up for incorrect fractional sampling on the shadow map grid.
+	float z1 = -min(dot(_ShadowMapTexture_TexelSize.xy, abs(dz_duv)), 0.01);//NGSS_RECEIVER_PLANE_MIN_FRACTIONAL_ERROR_LOCAL
+	#if defined(UNITY_REVERSED_Z)
+		z1 *= -1;
+	#endif
+	z0 += z1;
+#endif
+	//return z0 + (dz_duv.x * offset.x) + (dz_duv.y * offset.y);//AMD
+	z0 += dot(dz_duv, offset);
+	return z0;
 }
 
 // ------------------------------------------------------------------
@@ -89,8 +198,8 @@ float InterleavedGradientNoise(float2 position_screen)
 
 #if defined (SHADOWS_DEPTH) && defined (SPOT)
 
-	//INLINE SAMPLING
-	#if (SHADER_TARGET < 30  || UNITY_VERSION <= 570 || defined(SHADER_API_D3D9) || defined(SHADER_API_GLES) || defined(SHADER_API_PSP2) || defined(SHADER_API_N3DS) || defined(SHADER_API_GLCORE))
+	//INLINE SAMPLING //GLCORE support SM3.5 (required for Inline Sampling) but seems to be confused about Z buffer being inverted, so skip it
+	#if (UNITY_VERSION < 2017) || defined(NGSS_NO_SUPPORT) || defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3)// || defined(SHADER_API_METAL)
 		//#define NO_INLINE_SAMPLERS_SUPPORT
 	#else
 		#define NGSS_CAN_USE_PCSS_FILTER
@@ -111,143 +220,155 @@ float InterleavedGradientNoise(float2 position_screen)
     #endif
 	
 	#if defined (NGSS_CAN_USE_PCSS_FILTER)
-	float2 BLOCKER_SEARCH_SPOT(float4 coord, float diskRadius, float randPied, int samplers)
+	float2 BLOCKER_SEARCH_SPOT(float4 coord, float diskRadius, float randPied, int samplers, float2 dz_duv)
 	{
 		//BLOCKER SEARCH	
 		float blockerCount = 0;
 		float avgBlockerDistance = 0.0;		
+		float sampleDepth = coord.z;
 		
 		for (int i = 0; i < samplers; ++i)
 		{
-		
-			float2 rotatedOffset = VogelDiskSample(i, samplers, randPied) * diskRadius;
-		
-	#if defined (SHADOWS_NATIVE)
-			//Can speeded up with Gather and GatherRed (they can sample 4 surrounding pixels at the same time at once)
+			float2 rotatedOffset = VogelDiskSample(i, samplers, randPied) * diskRadius;			
+			#if defined(NGSS_USE_SLOPE_BIAS)
+			sampleDepth = SlopeBasedBiasCombine(coord.z, dz_duv, rotatedOffset);			
+			#endif
 			half closestDepth = _ShadowMapTexture.SampleLevel(my_linear_clamp_smp, coord.xy + rotatedOffset, 0.0);
-						
-	#else
-			half closestDepth = SAMPLE_DEPTH_TEXTURE(_ShadowMapTexture, coord.xy + rotatedOffset).r;
-	#endif
 			
 			//blockerCount++;
 			//avgBlockerDistance += closestDepth;
+
+			/*
 			#if defined(UNITY_REVERSED_Z)
-			if (closestDepth > coord.z)
+			if (closestDepth > sampleDepth)//coord.z
 			#else
-			if (closestDepth < coord.z)
+			if (closestDepth < sampleDepth)//coord.z
 			#endif
 			{
 				blockerCount++;
 				avgBlockerDistance += closestDepth;
-			}
+			}*/
+			
+			//No conditional branching
+			#if defined(UNITY_REVERSED_Z)
+			float sum = closestDepth >= sampleDepth;
+			blockerCount += sum;
+			avgBlockerDistance += closestDepth * sum;
+			#else
+			float sum = closestDepth <= sampleDepth;
+			blockerCount += sum;
+			avgBlockerDistance += closestDepth * sum;
+			#endif			
 		}
 
 		return float2(avgBlockerDistance / blockerCount, blockerCount);
 	}
 	#endif//NGSS_CAN_USE_PCSS_FILTER
 	
-	float PCF_FILTER_SPOT(float4 coord, float diskRadius, float randPied, int samplers)
+	float PCF_FILTER_SPOT(float4 coord, float diskRadius, float randPied, int samplers, float2 dz_duv)
 	{
 		float result = 0.0;
-				
+		float sampleDepth = coord.z;
+		
 		for (int i = 0; i < samplers; ++i)
 		{
-		
 			float2 rotatedOffset = VogelDiskSample(i, samplers, randPied) * diskRadius;
-		
-	#if defined (SHADOWS_NATIVE)
-			result += UNITY_SAMPLE_SHADOW(_ShadowMapTexture, float4(coord.xy + rotatedOffset, coord.zw)).r;	
-	#else			
-		#if defined(NGSS_USE_BIAS_FADE)
-			float shadowsFade = NGSS_BIAS_FADE * _LightPositionRange.w;
-			result += 1 - saturate((coord.z - SAMPLE_DEPTH_TEXTURE(_ShadowMapTexture, coord.xy + rotatedOffset).r) / shadowsFade);
-		#else
-			result += SAMPLE_DEPTH_TEXTURE(_ShadowMapTexture, coord.xy + rotatedOffset).r > coord.z ? 1.0 : 0.0;
-		#endif
-	#endif
+			#if defined(NGSS_USE_SLOPE_BIAS)
+			sampleDepth = SlopeBasedBiasCombine(coord.z, dz_duv, rotatedOffset);
+			#endif
+			
+			result += UNITY_SAMPLE_SHADOW(_ShadowMapTexture, float3(coord.xy + rotatedOffset, sampleDepth)).r;//coord.zw
 		}
 		half shadow = result / samplers;
 
 		return shadow;
 	}
 	
-	inline fixed UnitySampleShadowmap(float4 shadowCoord)//, float4 screenPos)
+	inline fixed UnitySampleShadowmapNGSS(float4 shadowCoord, float2 screenPos)
 	{
 		// DX11 feature level 9.x shader compiler (d3dcompiler_47 at least)
 		// has a bug where trying to do more than one shadowmap sample fails compilation
 		// with "inconsistent sampler usage". Until that is fixed, just never compile
 		// multi-tap shadow variant on d3d11_9x.
 		
-		#if defined(NO_NGSS_SUPPORT)
-		return 1.0;
+		#if defined(NGSS_NO_SUPPORT)			
+			// Fallback to 1-tap shadows
+			#if defined (SHADOWS_NATIVE)
+				half shadowFallback = UNITY_SAMPLE_SHADOW_PROJ(_ShadowMapTexture, shadowCoord);
+				shadowFallback = lerp(_LightShadowData.r, 1.0f, shadowFallback);//NGSS_GLOBAL_OPACITY == _LightShadowData.r
+			#else
+				half shadowFallback = SAMPLE_DEPTH_TEXTURE_PROJ(_ShadowMapTexture, UNITY_PROJ_COORD(shadowCoord)) < (shadowCoord.z / shadowCoord.w) ? _LightShadowData.r : 1.0;//NGSS_GLOBAL_OPACITY == _LightShadowData.r
+			#endif
+			return shadowFallback;
 		#endif
-		
-		//float diskRadius = 0.5 / (1-_LightShadowData.r) / (shadowCoord.z / (_LightShadowData.z + _LightShadowData.w));
-		float diskRadius = (1.0 - _LightShadowData.r);
-		
-		//if(shadowCoord.w < 0.0)
-		//return 1.0;
 
 		float4 coord = shadowCoord;
 		coord.xyz /= coord.w;
 		
-		//float4 worldSpacePos = mul(shadowCoord, unity_WorldToShadow[0]);
+		//Slope base bias
+		//float2 dz_duv = DepthGradientLocal(coord.xy, coord.z);//nVIDIA
+		float2 dz_duv = SlopeBasedBias(coord.xyz);//AMD
+		
+		//float4 wpos = mul(shadowCoord, unity_WorldToShadow[0]);
 		//float4 cpos = UnityWorldToClipPos(mul(inverseMat(unity_WorldToShadow[0]), coord).xyz);
-		//float4 cpos = UnityWorldToClipPos(vec + _LightPositionRange.xyz);
+		//float4 cpos = UnityWorldToClipPos(wpos);
 		//float4 spos = ComputeScreenPos(cpos);
-		//cpos.xyz /= cpos.w;//spos
-		float4 spos = tex2D(unity_RandomRotation16, coord.xy / coord.z * 0.5);//coord.xy / 8?
-				
-		float randPied = InterleavedGradientNoise(spos.xy) * UNITY_TWO_PI;//6.28318530718f
+		//spos.xyz /= spos.w;//screen pos
 		
-		#if defined(NGSS_SCALE_SAMPLERS_OVER_RADIUS)
-		int samplersTest = NGSS_TEST_SAMPLERS;//clamp(NGSS_TEST_SAMPLERS * diskRadius, 8.0, NGSS_TEST_SAMPLERS);//NEEDS MORE TESTS, INTRODUCE ARTIFACTS IF SHADOWS ARE TOO WIDE
-		int samplersFilter = NGSS_FILTER_SAMPLERS;//clamp(NGSS_FILTER_SAMPLERS * diskRadius, 16.0, NGSS_FILTER_SAMPLERS);
-		#else
-		int samplersTest = NGSS_TEST_SAMPLERS;
-		int samplersFilter = NGSS_FILTER_SAMPLERS;
-		#endif
-	
-	#if defined(SHADOWS_SOFT) && defined (NGSS_CAN_USE_PCSS_FILTER) && !defined (SHADER_API_D3D11_9X)
+		float randPied = InterleavedGradientNoise(screenPos) * UNITY_TWO_PI;//6.28318530718f
 		
+		//float diskRadius = 0.5 / (1-_LightShadowData.r) / (shadowCoord.z / (_LightShadowData.z + _LightShadowData.w));
+		float diskRadius = (1.0 - _LightShadowData.r);
 		//diskRadius = clamp(diskRadius * (coord.z * 0.5) , 0.05, 1.0);//try to keep same softness with distance
-		diskRadius *= 0.05;
+		//PCF = 0.0175 | PCSS = 0.05
 		
-		float2 distances = BLOCKER_SEARCH_SPOT(coord, diskRadius, randPied, samplersTest);
+		#if defined (NGSS_CAN_USE_PCSS_FILTER) && defined(SHADOWS_SOFT)//PCSS
+			half diskRadiusPCF = diskRadius * 0.05;//normal
+			//half diskRadiusPCF = diskRadius * 4.0 * coord.z;//scale over distance
+			//half diskRadiusPCF = lerp(0.05, 2.0 * coord.z, 0.5);//* coord.z behaves exactly as POINT PCSS
+			
+			float2 distances = BLOCKER_SEARCH_SPOT(coord, diskRadiusPCF, randPied, NGSS_TEST_SAMPLERS, dz_duv);
+			
+			if( distances.y == 0.0 )//There are no occluders so early out (this saves filtering)
+				return 1.0;
+			//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
+			else if (distances.y == NGSS_TEST_SAMPLERS)//There are 100% occluders so early out (this saves filtering)
+				return NGSS_GLOBAL_OPACITY;
+			//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
+			
+			//clamping the kernel size to avoid hard shadows at close ranges
+			//diskRadius *= clamp(distances.x, NGSS_PCSS_FILTER_POINT_MIN, NGSS_PCSS_FILTER_POINT_MAX);
+			#if defined(NGSS_USE_SLOPE_BIAS)
+			float coordz = SlopeBasedBiasCombine(coord.z, dz_duv, (0).xx);
+			float dist = (coordz - distances.x)/(distances.x);
+			#else
+			float dist = (coord.z - distances.x)/(distances.x);
+			#endif
+			
+			//diskRadiusPCF *= dist;//normal
+			diskRadiusPCF *= lerp(-NGSS_PCSS_FILTER_LOCAL_MIN, NGSS_PCSS_FILTER_LOCAL_MAX, dist);
+			
+		#else// NO NGSS_CAN_USE_PCSS_FILTER
+			half diskRadiusPCF = diskRadius * 0.0175;//lerp(0.0175, coord.z, 0.75);//* coord.z behaves exactly as POINT PCSS
+			half shadowTest = PCF_FILTER_SPOT(coord, diskRadiusPCF, randPied, NGSS_TEST_SAMPLERS, dz_duv);
+			
+			if(shadowTest == 1.0 )//There are no occluders so early out (this saves filtering)
+				return 1.0;
+			else if (shadowTest == 0.0)//There are 100% occluders so early out (this saves filtering)
+				return NGSS_GLOBAL_OPACITY;
+		#endif//NGSS_CAN_USE_PCSS_FILTER
 		
-		if( distances.y == 0.0 )//There are no occluders so early out (this saves filtering)
-			return 1.0;
-		//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
-		else if (distances.y == samplersTest)//There are 100% occluders so early out (this saves filtering)
-			return 0.0;
-		//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
-		 	
-		//clamping the kernel size to avoid hard shadows at close ranges
-		//diskRadius *= clamp(distances.x, NGSS_PCSS_FILTER_POINT_MIN, NGSS_PCSS_FILTER_POINT_MAX);
+		int samplers = clamp(NGSS_FILTER_SAMPLERS, 4, 64);//adding a minimal sampling value to avoid black shadowed light
 		
-		diskRadius *= ((coord.z - distances.x)/(distances.x));
-
-		half shadow = PCF_FILTER_SPOT(coord, diskRadius, randPied, samplersFilter);
-	#else
+		half shadow = PCF_FILTER_SPOT(coord, diskRadiusPCF, randPied, samplers, dz_duv);
+		
+		return lerp(NGSS_GLOBAL_OPACITY, 1.0, shadow);
+	}
 	
-		//diskRadius = clamp(diskRadius * (coord.z * 0.5), 0.05, 1.0);//try to keep same softness with distance
-		diskRadius *= 0.0175;//original value 0.025
-		
-		//half diskRadiusScale = shadowCoord.z;//scale over distance
-		//diskRadius *= (diskRadiusScale/diskRadiusScale/diskRadiusScale); //clamp this value
-
-		//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
-		half shadowTest = PCF_FILTER_SPOT(coord, diskRadius, randPied, samplersTest);
-		if (shadowTest == 0.0)//If all pixels are shadowed early bail out
-			return 0.0;
-		else if (shadowTest == 1.0)//If all pixels are lit early bail out
-			return 1.0;
-		//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
-		half shadow = PCF_FILTER_SPOT(coord, diskRadius, randPied, samplersFilter);
-	#endif
-
-		return shadow;
+	inline fixed UnitySampleShadowmap(float4 shadowCoord)
+	{
+		float2 spos = tex2D(unity_RandomRotation16, shadowCoord.xy * _ScreenParams.xy * 16).xy;
+		return UnitySampleShadowmapNGSS(shadowCoord, spos);
 	}
 
 #endif // #if defined (SHADOWS_DEPTH) && defined (SPOT)
@@ -258,15 +379,11 @@ float InterleavedGradientNoise(float2 position_screen)
 
 #if defined (SHADOWS_CUBE)
 	
-	//INLINE SAMPLING
-	#if (SHADER_TARGET < 30  || UNITY_VERSION <= 570 || defined(SHADER_API_D3D9) || defined(SHADER_API_GLES) || defined(SHADER_API_PSP2) || defined(SHADER_API_N3DS) || defined(SHADER_API_GLCORE))
-		//#define NO_INLINE_SAMPLERS_SUPPORT
-	#else
-		#define NGSS_CAN_USE_PCSS_FILTER
-		SamplerState my_linear_clamp_smp;
-	#endif
-	
+	//INLINE SAMPLING for CubeMaps are only available in 2017.3 and forward	
 	#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
+	#define NGSS_CAN_USE_PCSS_FILTER
+	SamplerState my_linear_clamp_smp;
+	
 	UNITY_DECLARE_TEXCUBE_SHADOWMAP(_ShadowMapTexture);
 	inline half computeShadowDist(float3 vec)
     {
@@ -275,16 +392,19 @@ float InterleavedGradientNoise(float2 position_screen)
 		
         float3 absVec = abs(vec);
 		
+		//float2 dz_duv = SlopeBasedBias(coord.xyz);//AMD
+		//float coordz = SlopeBasedBiasCombine(coord.z, dz_duv, (0).xx);
+		
 		//modd
-        float3 biasVec = normalize(absVec);
-        absVec -= biasVec * _LightProjectionParams.z;
+        //float3 biasVec = normalize(absVec);
+        //absVec -= biasVec * _LightProjectionParams.z;//bias
         absVec = max(float3(0.0, 0.0, 0.0), absVec);
 
         float dominantAxis = max(max(absVec.x, absVec.y), absVec.z); // TODO use max3() instead
-        dominantAxis = max(0.0, dominantAxis - max(0.005, _LightProjectionParams.z));// shadow bias from point light is apllied here. 
+        dominantAxis = max(0.0, dominantAxis - _LightProjectionParams.z * 0.5);// shadow bias from point light is apllied here. 
         //dominantAxis *= _LightProjectionParams.w; // extra bias no needed now
         float mydist = -_LightProjectionParams.x + _LightProjectionParams.y / dominantAxis; // project to shadow map clip space [0; 1]
-
+		
         #if defined(UNITY_REVERSED_Z)
         mydist = 1.0 - mydist; // depth buffers are reversed! Additionally we can move this to CPP code!
         #endif
@@ -304,241 +424,205 @@ float InterleavedGradientNoise(float2 position_screen)
 	}
 
 	#endif
-
-	inline half UnitySampleShadowmap(float3 vec)//, float4 screenPos) //screenPos the same pos as when fetching screen space shadow mask
+	
+	inline half UnitySampleShadowmapNGSS(float3 vec, float2 screenPos) //screenPos the same pos as when fetching screen space shadow mask
 	{
-		
-	#if defined(NO_NGSS_SUPPORT)
-		return 1.0;
-	#endif
-
-	#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
+		#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
 		//_LightPositionRange; // xyz = pos, w = 1/range
 		//_LightProjectionParams; // for point light projection: x = zfar / (znear - zfar), y = (znear * zfar) / (znear - zfar), z=shadow bias, w=shadow scale bias
 		float mydist = computeShadowDist(vec);		
-	#else
+		#else
 		//To get world pos back, simply add _LightPositionRange.xyz to vec
 		//receiver distance in 0-1 range
-		float mydist = length(vec) * _LightPositionRange.w;		
-	#endif//SHADOWS_CUBE_IN_DEPTH_TEX
-
-		float3 wpos = vec + _LightPositionRange.xyz;
-		float4 cpos = UnityWorldToClipPos(wpos);
+		float mydist = length(vec) * _LightPositionRange.w;
+		//mydist *= _LightProjectionParams.w; // bias
+		#endif
+		
+		#if defined(NGSS_NO_SUPPORT)
+			// Fallback to 1-tap shadows
+			#if defined (SHADOWS_CUBE_IN_DEPTH_TEX)
+				half shadowFallback = UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vec, mydist));
+				return lerp(_LightShadowData.r, 1.0, shadowFallback);//NGSS_GLOBAL_OPACITY == _LightShadowData.r
+			#else
+				half shadowVal = UnityDecodeCubeShadowDepth(UNITY_SAMPLE_TEXCUBE(_ShadowMapTexture, vec));
+				half shadowFallback = shadowVal < mydist ? _LightShadowData.r : 1.0;//NGSS_GLOBAL_OPACITY == _LightShadowData.r
+				return shadowFallback;
+			#endif
+		#endif
+		
+		//float3 wpos = vec + _LightPositionRange.xyz;
+		//float4 cpos = UnityWorldToClipPos(wpos);
 		//float4 spos = ComputeScreenPos(cpos);
-		cpos.xyz /= cpos.w;
+		//spos.xyz /= spos.w;//Screen pos 
 		//if( abs(cpos.x) > 1.0 || abs(cpos.y) > 1.0)//if outside screen clip it
 			//return 1.0;
-		float3 screenPos = tex2D(unity_RandomRotation16, cpos.xy).xyz;// wpos.xy / wpos.z gives static patterns at close range (needs to be scaled with screen depth);
-		//float4 rotation = tex2D(NGSS_NOISE_TEXTURE, spos.xy * _ScreenParams.zw);
 		//float fragDist = 1.0 - (length(wpos - _WorldSpaceCameraPos.xyz) * _LightPositionRange.w);
 		
-		float3 randDir = LocalRandDir(screenPos.xyz);
-	
 		float randPied = InterleavedGradientNoise(screenPos.xy) * UNITY_TWO_PI;//6.28318530718f
 		
 		// Tangent plane
-		float3 xaxis = normalize(cross(vec, randDir));
+		float3 xaxis = normalize(cross(vec, vec.zxy));//vec.zxy;//LocalRandDir(screenPos2.xyz);
 		float3 yaxis = normalize(cross(vec, xaxis));
 		
 		float shadow = 0.0;
 		//get radius in 0 to 1 range as it comes inverted for no reason
 		float diskRadius = (1 - _LightShadowData.r);
 		
-		#if defined(NGSS_SCALE_SAMPLERS_OVER_RADIUS)
-		int samplersTest = clamp(NGSS_TEST_SAMPLERS * diskRadius, 8.0, NGSS_TEST_SAMPLERS);
-		int samplersFilter = clamp(NGSS_FILTER_SAMPLERS * diskRadius, 16.0, NGSS_FILTER_SAMPLERS);
-		#else
-		int samplersTest = NGSS_TEST_SAMPLERS;
-		int samplersFilter = NGSS_FILTER_SAMPLERS;
-		#endif
-		
-	#if defined(SHADOWS_SOFT) && !defined(SHADER_API_GLCORE)// && defined (NGSS_CAN_USE_PCSS_FILTER)
-
-		//Multi-tap Shadows (PCSS)
-		
-		//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
-			diskRadius *= 0.25;
-		//#else
-			//diskRadius *= 0.5;
-		//#endif
-		
-		float3 xaxisB = xaxis * diskRadius;
-		float3 yaxisB = yaxis * diskRadius;
-		xaxis *= diskRadius;
-		yaxis *= diskRadius;
+		xaxis *= diskRadius * 0.25;
+		yaxis *= diskRadius * 0.25;
 		
 		//BLOCKER SEARCH	
 		float blockerCount = 0;
 		float avgBlockerDistance = 0.0;
-		
-		for (int i = 0; i < samplersTest; ++i)
-		{
-			float2 rotatedOffset = VogelDiskSample(i, samplersTest, randPied);
-			float3 sampleDir = xaxisB * rotatedOffset.x + yaxisB * rotatedOffset.y;
-			float3 vecOffset = vec + sampleDir;
-			
-		#if defined(SHADOWS_CUBE_IN_DEPTH_TEX) 
-			
-            half myOffsetDist = computeShadowDist(vecOffset);
-			//Can speeded up with Gather and GatherRed (they can sample 4 surrounding pixels at the same time at once)
-			half closestDepth = _ShadowMapTexture.SampleLevel(my_linear_clamp_smp, vecOffset, 0.0);
-			
-			#if defined(UNITY_REVERSED_Z)
-			//closestDepth = 1.0 - closestDepth;
-			#endif
-			
-			//blockerCount++;
-			//avgBlockerDistance += closestDepth;
-			
-		#if defined(UNITY_REVERSED_Z)
-			if (closestDepth >= myOffsetDist)//mydist)
-		#else
-			if (closestDepth <= myOffsetDist)//mydist)
-		#endif
-			{
-				blockerCount++;
-				avgBlockerDistance += closestDepth;
-			}
-			
-		#else// NO SHADOWS_CUBE_IN_DEPTH_TEX		
-			half closestDepth = SampleCubeDistance(vecOffset).r;
-			if (closestDepth < mydist)
-			{
-				blockerCount++;
-				avgBlockerDistance += closestDepth;
-			}
-		#endif//SHADOWS_CUBE_IN_DEPTH_TEX
-		
-		}
-		
-		if( blockerCount == 0.0 )//There are no occluders so early out (this saves filtering)
-			return 1.0;
-		//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
-		else if (blockerCount == samplersTest)//There are 100% occluders so early out (this saves filtering)
-			return 0.0;
-		//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
-		
-		float dist = avgBlockerDistance / blockerCount;
-		
-		//dist = 1.0 - dist;
-		//dist = _LightProjectionParams.y / (dist + _LightProjectionParams.x);//Convert from light to world space
-		//clamping the kernel size to avoid hard shadows at close ranges
-		//diskRadius *= clamp(dist, NGSS_PCSS_FILTER_POINT_MIN, NGSS_PCSS_FILTER_POINT_MAX);
-		//#if (UNITY_VERSION <= 570 || UNITY_VERSION == 20171 || UNITY_VERSION == 201711 || UNITY_VERSION == 201712 || UNITY_VERSION == 201713 || UNITY_VERSION == 20172 || UNITY_VERSION == 201721 || UNITY_VERSION == 201722)
-		#if (UNITY_VERSION <= 570 || UNITY_VERSION < 201730)
-		half diskRadiusPCF = ((mydist - dist)/(mydist));
-		#else
-		half diskRadiusPCF = ((mydist - dist)/(dist));
-		#endif
+		half diskRadiusFinal = 0.35;
 				
+		#if defined(SHADOWS_SOFT)//PCSS	TEST
+		
+			for (int i = 0; i < NGSS_TEST_SAMPLERS; ++i)
+			{
+				float2 rotatedOffset = VogelDiskSample(i, NGSS_TEST_SAMPLERS, randPied);
+				float3 sampleDir = xaxis * rotatedOffset.x + yaxis * rotatedOffset.y;
+				float3 vecOffset = vec + sampleDir;
+				//float sampleDepth = BiasedZLocal(shadowDepth, dz_duv, sampleOffset);//nVIDIA
+				
+			#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
+				
+				half myOffsetDist = computeShadowDist(vecOffset);
+				//Can speeded up with Gather and GatherRed (they can sample 4 surrounding pixels at the same time at once)
+				half closestDepth = _ShadowMapTexture.SampleLevel(my_linear_clamp_smp, vecOffset, 0.0);
+				
+				/*
+				#if defined(UNITY_REVERSED_Z)
+				if (closestDepth >= myOffsetDist)//mydist)
+				#else
+				if (closestDepth <= myOffsetDist)//mydist)
+				#endif
+				{
+					blockerCount++;
+					avgBlockerDistance += closestDepth;
+				}*/
+				
+				//No conditional branching
+				#if defined(UNITY_REVERSED_Z)
+				float sum = closestDepth > myOffsetDist;
+				#else
+				float sum = closestDepth < myOffsetDist;
+				#endif
+				//GLCORE dont play well with PCSS so skip it
+				#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3)// || defined(SHADER_API_METAL)
+				blockerCount += sum;
+				#else
+				blockerCount += sum;
+				avgBlockerDistance += closestDepth * sum;
+				#endif				
+				
+			#else// NO SHADOWS_CUBE_IN_DEPTH_TEX
+			
+				half closestDepth = SampleCubeDistance(vecOffset).r;
+				/*
+				if (closestDepth < mydist)
+				{
+					blockerCount++;
+					avgBlockerDistance += closestDepth;
+				}
+				*/
+				float sum = closestDepth < mydist;
+				blockerCount += sum;
+				avgBlockerDistance += closestDepth * sum;
+				
+			#endif//SHADOWS_CUBE_IN_DEPTH_TEX		
+			}
+			
+			if( blockerCount == 0.0 )//There are no occluders so early out (this saves filtering)
+				return 1.0;
+			//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)
+			else if (blockerCount == NGSS_TEST_SAMPLERS)//There are 100% occluders so early out (this saves filtering)
+				return NGSS_GLOBAL_OPACITY;
+			//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
+			
+			//GLCORE support SM3.5 (required for Inline Sampling) but seems to be confused about Z buffer being inverted, so skip it
+			#if defined(SHADER_API_GLCORE) || defined(SHADER_API_GLES3)// || defined(SHADER_API_METAL)
+				diskRadiusFinal = 0.35;//Lerp between PCF and PCSS
+			#else
+				avgBlockerDistance /= blockerCount;
+				
+				//avgBlockerDistance = _LightProjectionParams.y / (avgBlockerDistance + _LightProjectionParams.x);//Convert from light to world space
+				//clamping the kernel size to avoid hard shadows at close ranges
+				//diskRadius *= clamp(avgBlockerDistance, NGSS_PCSS_FILTER_POINT_MIN, NGSS_PCSS_FILTER_POINT_MAX);
+				//#if (UNITY_VERSION <= 570 || UNITY_VERSION == 20171 || UNITY_VERSION == 201711 || UNITY_VERSION == 201712 || UNITY_VERSION == 201713 || UNITY_VERSION == 20172 || UNITY_VERSION == 201721 || UNITY_VERSION == 201722)
+				#if (UNITY_VERSION <= 570 || UNITY_VERSION < 201730)
+				float dist = ((mydist - avgBlockerDistance)/(mydist));
+				diskRadiusFinal = lerp(0.0, 1.0, dist);//in earlier versions of Unity (before 201730) we dont expose PCSS properties so hardcoding these values
+				#else
+				float dist = ((mydist - avgBlockerDistance)/(avgBlockerDistance));
+				diskRadiusFinal = lerp(-NGSS_PCSS_FILTER_LOCAL_MIN, NGSS_PCSS_FILTER_LOCAL_MAX, dist);
+				#endif
+				
+			#endif	
+			
+		#else //PCF TEST
+			half shadowTest = 0.0;
+			for (int j = 0; j < NGSS_TEST_SAMPLERS; ++j)
+			{
+				float2 rotatedOffset = VogelDiskSample(j, NGSS_TEST_SAMPLERS, randPied);
+				float3 sampleDir = xaxis * rotatedOffset.x + yaxis * rotatedOffset.y;
+				
+			#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
+				
+				float3 vecOffset = vec + sampleDir * diskRadiusFinal;
+				half myOffsetDist = computeShadowDist(vecOffset);
+				shadowTest += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, myOffsetDist));
+				//shadowTest += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, mydist);
+				
+			#else
+				
+				float closestDepth = SampleCubeDistance(vec + sampleDir * diskRadiusFinal).r;
+				shadowTest += (mydist - closestDepth < 0.0) ? 1.0 : 0.0;
+				
+			#endif//SHADOWS_CUBE_IN_DEPTH_TEX
+			}
+			shadowTest /= NGSS_TEST_SAMPLERS;
+			
+			if(shadowTest == 1.0 )//There are no occluders so early out (this saves filtering)
+				return 1.0;
+			else if (shadowTest == 0.0)//There are 100% occluders so early out (this saves filtering)
+				return NGSS_GLOBAL_OPACITY;
+			
+		#endif
+		
+		int samplers = clamp(NGSS_FILTER_SAMPLERS, 4, 64);//adding a minimal sampling value to avoid black shadowed light
+		
 		//PCF FILTERING
-		for (int j = 0; j < samplersFilter; ++j)
+		for (int j = 0; j < samplers; ++j)
 		{
-			float2 rotatedOffset = VogelDiskSample(j, samplersFilter, randPied);
+			float2 rotatedOffset = VogelDiskSample(j, samplers, randPied);
 			float3 sampleDir = xaxis * rotatedOffset.x + yaxis * rotatedOffset.y;
 			
 		#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
 			
-			float3 vecOffset = vec + sampleDir * diskRadiusPCF;
+			float3 vecOffset = vec + sampleDir * diskRadiusFinal;
             half myOffsetDist = computeShadowDist(vecOffset);
-
 			shadow += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, myOffsetDist));
 			//shadow += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, mydist);
 			
 		#else
 			
-			float closestDepth = SampleCubeDistance(vec + sampleDir * diskRadiusPCF).r;
-
-			#if defined(NGSS_USE_BIAS_FADE)
-			float shadowsFade = NGSS_BIAS_FADE * _LightPositionRange.w;
-			shadow += 1 - saturate((mydist - closestDepth) / shadowsFade);
-			#else
+			float closestDepth = SampleCubeDistance(vec + sampleDir * diskRadiusFinal).r;
 			shadow += (mydist - closestDepth < 0.0) ? 1.0 : 0.0;
-			#endif
 			
 		#endif//SHADOWS_CUBE_IN_DEPTH_TEX
 		}
 		
-		return shadow / samplersFilter;
-
-	#else //PCF
-
-		//Multi-tap Shadows (PCF)
-		/*
-		float scaledDistance = mydist * 2;//length(vec);// _LightPositionRange.w;		
-		#if (UNITY_VERSION <= 570 || UNITY_VERSION < 201730)
-		diskRadius *= 0.2 * clamp(scaledDistance, 1, scaledDistance);
-		#else
-		diskRadius *= 0.005 / clamp(scaledDistance, 1, scaledDistance);
-		#endif
-		*/
-		diskRadius *= 0.1;
-		xaxis *= diskRadius;
-		yaxis *= diskRadius;
-		
-		//EARLY BAILING OUT
-		//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION)		
-		float shadowTest = 0.0;
-		
-		for (int i = 0; i < samplersTest; ++i)
-		{
-			float2 rotatedOffset = VogelDiskSample(i, samplersTest, randPied);
-			float3 sampleDir = xaxis * rotatedOffset.x + yaxis * rotatedOffset.y;
-			
-		#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
-			float3 vecOffset = vec + sampleDir;
-            half myOffsetDist = computeShadowDist(vecOffset);
-    		shadowTest += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, myOffsetDist));
-			//shadowTest += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, mydist));
-		#else
-			
-			float closestDepth = SampleCubeDistance(vec + sampleDir).r;
-
-			shadowTest += (mydist - closestDepth < 0.0) ? 1.0 : 0.0;
-			
-		#endif//SHADOWS_CUBE_IN_DEPTH_TEX
-		
-		}
-		
-		if (shadowTest == 0.0)//If all pixels are shadowed early bail out
-			return 0.0;
-		else if (shadowTest == samplersTest)//If all pixels are lit early bail out
-			return 1.0;
-		//else
-			//shadow = shadowTest;
-			
-		//#endif//NGSS_USE_EARLY_BAILOUT_OPTIMIZATION
-				
-		//PCF FILTERING
-		for (int j = 0; j < samplersFilter; ++j)
-		{
-			float2 rotatedOffset = VogelDiskSample(j, samplersFilter, randPied);
-			float3 sampleDir = xaxis * rotatedOffset.x + yaxis * rotatedOffset.y;
-			
-		#if defined(SHADOWS_CUBE_IN_DEPTH_TEX)
-			float3 vecOffset = vec + sampleDir;
-            half myOffsetDist = computeShadowDist(vecOffset);
-
-			shadow += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, myOffsetDist));
-			//shadow += UNITY_SAMPLE_TEXCUBE_SHADOW(_ShadowMapTexture, float4(vecOffset, mydist));
-			
-		#else
-			
-			float closestDepth = SampleCubeDistance(vec + sampleDir).r;
-
-			#if defined(NGSS_USE_BIAS_FADE)
-			float shadowsFade = NGSS_BIAS_FADE * _LightPositionRange.w;
-			shadow += 1 - saturate((mydist - closestDepth) / shadowsFade);
-			#else
-			shadow += (mydist - closestDepth < 0.0) ? 1.0 : 0.0;
-			#endif
-			
-		#endif//SHADOWS_CUBE_IN_DEPTH_TEX
-		}
-		
-		return shadow / samplersFilter;
-		
-	#endif
+		return lerp(NGSS_GLOBAL_OPACITY, 1.0, shadow / samplers);
+	}
+	
+	inline half UnitySampleShadowmap(float3 vec)
+	{
+		float3 wpos = vec + _LightPositionRange.xyz;
+		float4 cpos = UnityWorldToClipPos(wpos);
+		float4 spos = ComputeScreenPos(cpos);
+		spos.xyz /= spos.w;//ScreenPos
+		return UnitySampleShadowmapNGSS(vec, spos.xy);
 	}
 
 #endif // #if defined (SHADOWS_CUBE)

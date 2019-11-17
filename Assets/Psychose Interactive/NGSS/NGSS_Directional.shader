@@ -1,3 +1,5 @@
+// Unity built-in shader source. Copyright (c) 2016 Unity Technologies. MIT license (see license.txt)
+
 // Collects cascaded shadows into screen space buffer
 Shader "Hidden/NGSS_Directional" {
 Properties {
@@ -244,31 +246,40 @@ uniform float NGSS_CASCADES_COUNT = 4;
 uniform float NGSS_CASCADE_BLEND_DISTANCE = 0.25;
 uniform float NGSS_CASCADES_SOFTNESS_NORMALIZATION = 1;
 
-uniform float NGSS_BANDING_TO_NOISE_RATIO_DIR = 1;
+uniform float NGSS_NOISE_TO_DITHERING_SCALE_DIR = 1;
 
 uniform float NGSS_FILTER_SAMPLERS_DIR = 32;
 uniform float NGSS_TEST_SAMPLERS_DIR = 16;
 
+//uniform float NGSS_DOT_ANGLE = 1.0;
+
 //INLINE SAMPLING
-#if (SHADER_TARGET < 30  || UNITY_VERSION <= 570 || defined(SHADER_API_D3D9) || defined(SHADER_API_GLES) || defined(SHADER_API_PSP2) || defined(SHADER_API_N3DS) || defined(SHADER_API_GLCORE))
+#if (SHADER_TARGET < 30  || UNITY_VERSION <= 570 || defined(SHADER_API_D3D9) || defined(SHADER_API_GLES) || defined(SHADER_API_PSP2) || defined(SHADER_API_N3DS))
 	//#define NO_INLINE_SAMPLERS_SUPPORT
-#elif defined(NGSS_PCSS_FILTER_DIR)
+	//#define NGSS_NO_SUPPORT_DIR
+#elif (defined(NGSS_PCSS_FILTER_DIR) && !defined(UNITY_NO_SCREENSPACE_SHADOWS))
 	#define NGSS_CAN_USE_PCSS_FILTER_DIR
-	SamplerState my_point_clamp_smp2;
+	SamplerState my_linear_clamp_smp2;
 #endif
 
-//uniform float NGSS_RECEIVER_PLANE_MIN_FRACTIONAL_ERROR = 0.01;
+//uniform float NGSS_RECEIVER_PLANE_MIN_FRACTIONAL_ERROR_DIR = 0.01;
 
 uniform float NGSS_GLOBAL_SOFTNESS = 0.01;
 uniform float NGSS_PCSS_FILTER_DIR_MIN = 0.05;
 uniform float NGSS_PCSS_FILTER_DIR_MAX = 0.25;
 uniform float NGSS_BIAS_FADE_DIR = 0.001;
 
+uniform sampler2D _BlueNoiseTextureDir;
+uniform float4 _BlueNoiseTextureDir_TexelSize;
+
+#define ditherPatternDir float4x4(0.0,0.5,0.125,0.625, 0.75,0.22,0.875,0.375, 0.1875,0.6875,0.0625,0.5625, 0.9375,0.4375,0.8125,0.3125)
+
 float2 VogelDiskSampleDir(int sampleIndex, int samplesCount, float phi)
 {
 	//float phi = 3.14159265359f;//UNITY_PI;
 	float GoldenAngle = 2.4f;
 
+	//float r = sqrt(sampleIndex + 0.5f) / sqrt(samplesCount);
 	float r = sqrt(sampleIndex + 0.5f) / sqrt(samplesCount);
 	float theta = sampleIndex * GoldenAngle + phi;
 
@@ -277,47 +288,138 @@ float2 VogelDiskSampleDir(int sampleIndex, int samplesCount, float phi)
 	
 	return float2(r * cosine, r * sine);
 }
+/*
+float OrderedDitheringDir(float x, float y, float c0)
+{
+    //dither matrix reference: https://en.wikipedia.org/wiki/Ordered_dithering
+    const static float dither[64] = {
+        0, 32, 8, 40, 2, 34, 10, 42,
+        48, 16, 56, 24, 50, 18, 58, 26 ,
+        12, 44, 4, 36, 14, 46, 6, 38 ,
+        60, 28, 52, 20, 62, 30, 54, 22,
+        3, 35, 11, 43, 1, 33, 9, 41,
+        51, 19, 59, 27, 49, 17, 57, 25,
+        15, 47, 7, 39, 13, 45, 5, 37,
+        63, 31, 55, 23, 61, 29, 53, 21 };
+
+    int xMat = int(x) & 7;
+    int yMat = int(y) & 7;
+
+    float limit = (dither[yMat * 8 + xMat] + 11.0) / 64.0;
+    //could also use saturate(step(0.995, c0) + limit*(c0));
+    //original step(limit, c0 + 0.01);
+
+    return lerp(limit*c0, 1.0, c0);
+}*/
 
 float InterleavedGradientNoiseDir(float2 position_screen)
 {
-	float2 magic = position_screen * 10;
-    return lerp(0, frac(sin(dot(magic, magic)) * 43758.5453f), NGSS_BANDING_TO_NOISE_RATIO_DIR) * UNITY_TWO_PI;
+	//dithering
+	float ditherValue = ditherPatternDir[position_screen.x * _ScreenParams.x % 4][position_screen.y * _ScreenParams.y % 4];
+	//float ditherValue = OrderedDitheringDir(position_screen.x * _ScreenParams.x, position_screen.y * _ScreenParams.y, 0.25) * UNITY_FOUR_PI;
+	
+	//white noise
+	//float2 magic = position_screen * 10;//float2( 23.14069263277926f, 2.665144142690225f);//float2(0.06711056f, 0.00583715f)
+    //return frac(sin(dot(magic, magic)) * 43758.5453f) * UNITY_TWO_PI;
+	
+	//blue noise
+	//float noiseValue = tex2D(unity_RandomRotation16, position_screen.xy * _BlueNoiseTextureDir_TexelSize.xy * _ScreenParams.xy).r * 100;
+	float noiseValue = tex2D(_BlueNoiseTextureDir, position_screen.xy * _BlueNoiseTextureDir_TexelSize.xy * _ScreenParams.xy).r;
+	return lerp(noiseValue, ditherValue, NGSS_NOISE_TO_DITHERING_SCALE_DIR) * UNITY_TWO_PI;
 }
 
+float3 ReceiverPlaneDepthBiasNGSS(float3 shadowCoord, float biasMultiply)
+{
+    // Should receiver plane bias be used? This estimates receiver slope using derivatives, and tries to tilt the PCF kernel along it. However, when doing it in screenspace from the depth texture
+    // (ie all light in deferred and directional light in both forward and deferred), the derivatives are wrong on edges or intersections of objects, leading to shadow artifacts. Thus it is disabled by default.
+    float3 biasUVZ = 0;
+
+#if defined(NGSS_USE_RECEIVER_PLANE_BIAS) && defined(SHADOWMAPSAMPLER_AND_TEXELSIZE_DEFINED)
+    float3 dx = ddx(shadowCoord);
+    float3 dy = ddy(shadowCoord);
+
+    biasUVZ.x = dy.y * dx.z - dx.y * dy.z;
+    biasUVZ.y = dx.x * dy.z - dy.x * dx.z;
+    biasUVZ.xy *= biasMultiply / ((dx.x * dy.y) - (dx.y * dy.x));
+
+    // Static depth biasing to make up for incorrect fractional sampling on the shadow map grid.    
+    float fractionalSamplingError = dot(_ShadowMapTexture_TexelSize.xy, abs(biasUVZ.xy));
+    biasUVZ.z = -min(fractionalSamplingError, 0.01);//NGSS_RECEIVER_PLANE_MIN_FRACTIONAL_ERROR_DIR
+    #if defined(UNITY_REVERSED_Z)
+        biasUVZ.z *= -1;
+    #endif
+#endif
+
+    return biasUVZ;
+}
+
+//Combines the different components of a shadow coordinate and returns the final coordinate. See ReceiverPlaneDepthBiasNGSS
+float3 CombineShadowCoordsNGSS(float2 baseUV, float2 deltaUV, float depth, float3 receiverPlaneDepthBias)
+{
+    float3 uv = float3(baseUV + deltaUV, depth + receiverPlaneDepthBias.z);
+    uv.z += dot(deltaUV, receiverPlaneDepthBias.xy);
+    return uv;
+}
 
 /********************************************************************************/
 
 #if defined(NGSS_CAN_USE_PCSS_FILTER_DIR)
 //BlockerSearch
-float2 BlockerSearch(float2 uv, float receiver, float searchUV, float Sampler_Number, float randPied, float2 screenpos, uint cascadeIndex)
+float2 BlockerSearch(float2 uv, float receiver, float searchUV, float3 receiverPlaneDepthBias, float Sampler_Number, float randPied, uint cascadeIndex)
 {
 	float avgBlockerDepth = 0.0;
 	float numBlockers = 0.0;
 	float blockerSum = 0.0;
+	float depth = _ShadowMapTexture.SampleLevel(my_linear_clamp_smp2, uv.xy, 0.0);
 
 	int samplers = Sampler_Number;// / (cascadeIndex / 2);
-	UNITY_LOOP
 	for (int i = 0; i < samplers; i++)
 	{
 		float2 offset = VogelDiskSampleDir(i, samplers, randPied) * searchUV;
-		float2 uvs = uv + offset;
+		float3 biasedCoords = float3(uv + offset, receiver);
+		
+		#if defined(NGSS_USE_RECEIVER_PLANE_BIAS)
+		biasedCoords = CombineShadowCoordsNGSS(uv.xy, offset, receiver, receiverPlaneDepthBias);
+		#endif
 		
 		#if !defined(SHADOWS_SINGLE_CASCADE)
-		uvs = clamp(uvs, 0, cascadeIndex / NGSS_CASCADES_COUNT * 4 * 0.499);//make sure we are not sampling outside the current cascade
+		biasedCoords.xy = clamp(biasedCoords.xy, 0, cascadeIndex / NGSS_CASCADES_COUNT * 4 * 0.499);//make sure we are not sampling outside the current cascade
 		#endif
-		float shadowMapDepth = _ShadowMapTexture.SampleLevel(my_point_clamp_smp2, uvs, 0);
 		
+		float shadowMapDepth = _ShadowMapTexture.SampleLevel(my_linear_clamp_smp2, biasedCoords.xy, 0.0);
+		//_ShadowMapTexture.SampleCmpLevelZero(sampler_ShadowMapTexture, biasedCoords.xy, biasedCoords.z);// works with HLSL syntax (probably not with GLSL)
+		/*
 		#if defined(UNITY_REVERSED_Z)
-		blockerSum += shadowMapDepth >= receiver ? shadowMapDepth : 0;
-		numBlockers += shadowMapDepth >= receiver ? 1.0 : 0.0;
+		if (shadowMapDepth >= biasedCoords.z)
 		#else
-		blockerSum += shadowMapDepth <= receiver ? shadowMapDepth : 0;
-		numBlockers += shadowMapDepth <= receiver ? 1.0 : 0.0;
+		if (shadowMapDepth <= biasedCoords.z)
 		#endif
+		{
+			blockerSum += shadowMapDepth;
+			numBlockers++;
+		}
+		*/
+		//No conditional branching
+		#if defined(UNITY_REVERSED_Z)
+		float sum = shadowMapDepth >= biasedCoords.z;
+		blockerSum += shadowMapDepth * sum;
+		numBlockers += sum;
+		#else
+		float sum = shadowMapDepth <= biasedCoords.z;
+		blockerSum += shadowMapDepth * sum;
+		numBlockers += sum;
+		#endif
+		
 	}
 
 	avgBlockerDepth = blockerSum / numBlockers;
-
+	/*
+	#if defined(UNITY_REVERSED_Z)
+	avgBlockerDepth = max(depth, blockerSum / numBlockers);
+	#else
+	avgBlockerDepth = min(depth, blockerSum / numBlockers);
+	#endif
+	*/
 #if defined(UNITY_REVERSED_Z)
 	avgBlockerDepth = 1.0 - avgBlockerDepth;
 #endif
@@ -327,24 +429,26 @@ float2 BlockerSearch(float2 uv, float receiver, float searchUV, float Sampler_Nu
 #endif//NGSS_CAN_USE_PCSS_FILTER_DIR
 
 //PCF
-float PCF_FilterDir(float2 uv, float receiver, float diskRadius, float Sampler_Number, float randPied, float2 screenpos, uint cascadeIndex)
+float PCF_FilterDir(float2 uv, float receiver, float diskRadius, float3 receiverPlaneDepthBias, float Sampler_Number, float randPied, uint cascadeIndex)
 {
 	float sum = 0.0f;
 	//if(cascadeIndex == 4)
 		//return 0;
 	int samplers = Sampler_Number;// / (cascadeIndex / 2);
-	UNITY_LOOP
 	for (int i = 0; i < samplers; i++)
 	{
-		float2 offset = VogelDiskSampleDir(i, samplers, randPied) * diskRadius;		
-		float depthBiased = receiver;
-		float2 uvs = uv + offset;
+		float2 offset = VogelDiskSampleDir(i, samplers, randPied) * diskRadius;
+		float3 biasedCoords = float3(uv + offset, receiver);
+		
+		#if defined(NGSS_USE_RECEIVER_PLANE_BIAS)
+		biasedCoords = CombineShadowCoordsNGSS(uv.xy, offset, receiver, receiverPlaneDepthBias);
+		#endif
 		
 		#if !defined(SHADOWS_SINGLE_CASCADE)
-		uvs = clamp(uvs, 0, cascadeIndex / NGSS_CASCADES_COUNT * 4 * 0.499);//make sure we are not sampling outside the current cascade
+		biasedCoords.xy = clamp(biasedCoords.xy, 0, cascadeIndex / NGSS_CASCADES_COUNT * 4 * 0.499);//make sure we are not sampling outside the current cascade
 		#endif
-		float value = UNITY_SAMPLE_SHADOW(_ShadowMapTexture, float4(uvs, depthBiased, 0.0));
 		
+		float value = UNITY_SAMPLE_SHADOW(_ShadowMapTexture, biasedCoords);
 		sum += value;
 	}
 
@@ -352,13 +456,19 @@ float PCF_FilterDir(float2 uv, float receiver, float diskRadius, float Sampler_N
 }
 
 //Main Function
-float NGSS_Main(float4 coord, float2 screenpos, uint cascadeIndex)
+float NGSS_Main(float4 coord, float3 receiverPlaneDepthBias, float2 screenpos, uint cascadeIndex)
 {
 	float randPied = InterleavedGradientNoiseDir(screenpos);
-	float shadowSoftness = NGSS_GLOBAL_SOFTNESS;//NGSS_GLOBAL_SOFTNESS default value 100
-
-	float2 uv = coord.xy;//clamp(coord.xy, 0, clamp(coord.xy, 0, cascadeIndex / NGSS_CASCADES_COUNT * 4 * 0.499 - NGSS_GLOBAL_SOFTNESS * 0.199));
-	float receiver = coord.z;
+	#if defined(SHADOWS_SPLIT_SPHERES)
+	float shadowSoftness = clamp(NGSS_GLOBAL_SOFTNESS, 0.001, 0.25);
+	#else
+	float3 viewDir = mul((float3x3)unity_CameraToWorld, float3(0,0,1));
+	float DOT_ANGLE = 1 - abs(dot(viewDir, float3(0.0, 1.0, 0.0)));
+	float shadowSoftness = NGSS_GLOBAL_SOFTNESS * 0.005 / clamp(DOT_ANGLE, 0.1, 1.0);
+	#endif
+	
+	float2 uv = coord.xy;
+	float receiver = coord.z;// - ditherValue;
 	float shadow = 1.0;
 	float diskRadius = 0.01;
 	
@@ -373,28 +483,48 @@ float NGSS_Main(float4 coord, float2 screenpos, uint cascadeIndex)
 
 #if defined(NGSS_CAN_USE_PCSS_FILTER_DIR)
 	
-	float2 blockerResults = BlockerSearch(uv, receiver, shadowSoftness * 0.25, NGSS_TEST_SAMPLERS_DIR, randPied, screenpos, cascadeIndex);
-
+	float2 blockerResults = BlockerSearch(uv, receiver, shadowSoftness * 0.5, receiverPlaneDepthBias, NGSS_TEST_SAMPLERS_DIR, randPied, cascadeIndex);
+	//return blockerResults.x;//visualizing blockerResults
 	if (blockerResults.y == 0.0)//There are no occluders so early out (this saves filtering)
 		return 1.0;
+//#if defined(NGSS_USE_EARLY_BAILOUT_OPTIMIZATION_DIR)
+	//else if (blockerResults.y == NGSS_TEST_SAMPLERS_DIR)//There are 100% occluders so early out (this saves filtering but introduces artefacts)
+		//return 0.0;//can sample 4 pixels instead of just returning 0
+//#endif	
 
+//PCSS FORMULA: penumbraSize = (receiver - avBlocker) * lightSize / receiver;
 #if defined(UNITY_REVERSED_Z)
-	float penumbra = ((1.0 - receiver) - blockerResults.x);
+	float penumbra = ((1.0 - receiver) - blockerResults.x) / (1 - blockerResults.x);
 #else
-	float penumbra = (receiver - blockerResults.x);
+	float penumbra = (receiver - blockerResults.x) / blockerResults.x;
 #endif
 	
-	diskRadius = clamp(penumbra, NGSS_PCSS_FILTER_DIR_MIN, NGSS_PCSS_FILTER_DIR_MAX) * shadowSoftness;
+	//diskRadius = clamp(penumbra, NGSS_PCSS_FILTER_DIR_MIN, NGSS_PCSS_FILTER_DIR_MAX) * shadowSoftness;
+	diskRadius = lerp(NGSS_PCSS_FILTER_DIR_MIN, NGSS_PCSS_FILTER_DIR_MAX, penumbra) * shadowSoftness;
+	
 #else//NO PCSS FILTERING
-	diskRadius = shadowSoftness * 0.25;
+	#if defined(UNITY_NO_SCREENSPACE_SHADOWS)
+	diskRadius = shadowSoftness * 0.03125;
+	#else
+	diskRadius = shadowSoftness * 0.125;
+	#endif
+	
+//#endif
 #endif//NGSS_CAN_USE_PCSS_FILTER_DIR
-	 
-	shadow = PCF_FilterDir(uv, receiver, diskRadius, NGSS_TEST_SAMPLERS_DIR, randPied, screenpos, cascadeIndex);
+
+	shadow = PCF_FilterDir(uv, receiver, diskRadius, receiverPlaneDepthBias, NGSS_TEST_SAMPLERS_DIR, randPied, cascadeIndex);
 	if (shadow == 1.0)//If all pixels are lit early bail out
 		return 1.0;
+	else if (shadow == 0.0)//If all pixels are shadowed early bail out (introduces tiny black pixels, not really visible)
+		return 0.0;
+			
+	int samplers = clamp(NGSS_FILTER_SAMPLERS_DIR, 4, 128);//adding a minimal sampling value to avoid black shadowed light
 
 	//float Sampler_Number = (int)clamp(Sampler_Number * (diskRadius / NGSS_GLOBAL_SOFTNESS), Sampler_Number * 0.5, Sampler_Number);
-	shadow = PCF_FilterDir(uv, receiver, diskRadius, NGSS_FILTER_SAMPLERS_DIR, randPied, screenpos, cascadeIndex);	
+	shadow = PCF_FilterDir(uv, receiver, diskRadius, receiverPlaneDepthBias, samplers, randPied, cascadeIndex);
+	
+	//shadow = 3*(shadow)^2-2*(shadow)^3
+	
 	return shadow;	
 }
 
@@ -430,10 +560,10 @@ fixed4 frag_hard (v2f i) : SV_Target
 //Soft shadow
 fixed4 frag_pcfSoft(v2f i) : SV_Target
 {
-#if defined(NGSS_HARD_SHADOWS_DIR)
+//#if defined(NGSS_HARD_SHADOWS_DIR)
 	//Hard shadows from soft shadows? muhahaha ^^
-	return frag_hard(i);
-#endif
+	//return frag_hard(i);
+//#endif
 	
 	//Return one if you want only ContactShadows, keep in mind that the cascaded depth are still rendered
 	//return 1.0;
@@ -469,14 +599,34 @@ fixed4 frag_pcfSoft(v2f i) : SV_Target
 #endif
 	
     float3 receiverPlaneDepthBias = 0.0;
-	
+#ifdef NGSS_USE_RECEIVER_PLANE_BIAS
+    // Reveiver plane depth bias: need to calculate it based on shadow coordinate
+    // as it would be in first cascade; otherwise derivatives
+    // at cascade boundaries will be all wrong. So compute
+    // it from cascade 0 UV, and scale based on which cascade we're in.
+	#if defined (SHADOWS_SINGLE_CASCADE)
+	float3 coordCascade0 = coord;
+	#else
+    float3 coordCascade0 = getShadowCoord_SingleCascade(wpos);
+	#endif
+    float biasMultiply = dot(cascadeWeights,unity_ShadowCascadeScales);
+    receiverPlaneDepthBias = ReceiverPlaneDepthBiasNGSS(coordCascade0.xyz, biasMultiply);
+#endif
+/*
+	//Reconstructing screen position using depth
+	float zdepth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, i.uv.xy);
+#if defined(UNITY_REVERSED_Z)
+	zdepth = 1 - zdepth;
+#endif
+	float4 clipPos = float4(i.uv.zw, zdepth, 1.0);
+*/
 	fixed cascadeIndex = 1;
 #if !defined(SHADOWS_SINGLE_CASCADE)
 	cascadeIndex += 4 - dot(cascadeWeights, half4(4, 3, 2, 1));
 #endif
 
 	//float shadow = UnitySampleShadowmap_PCF7x7Tent(coord, receiverPlaneDepthBias);
-	float shadow = NGSS_Main(coord, i.uv.xy, cascadeIndex);
+	float shadow = NGSS_Main(coord, receiverPlaneDepthBias, i.uv.xy, cascadeIndex);
 
 	// Blend between shadow cascades if enabled. No need when 1 cascade
 #if defined(NGSS_USE_CASCADE_BLENDING) && !defined(SHADOWS_SINGLE_CASCADE)
@@ -505,8 +655,13 @@ fixed4 frag_pcfSoft(v2f i) : SV_Target
 		//coord = GET_SHADOW_COORDINATES(wpos, cascadeWeights);
 		coord = getShadowCoordFinal(sc0, sc1, sc2, sc3, cascadeWeights);
 
+#if defined(NGSS_USE_RECEIVER_PLANE_BIAS)
+		biasMultiply = dot(cascadeWeights, unity_ShadowCascadeScales);
+		receiverPlaneDepthBias = ReceiverPlaneDepthBiasNGSS(coordCascade0.xyz, biasMultiply);
+#endif
+
 		//half shadowNextCascade = UnitySampleShadowmap_PCF3x3(coord, receiverPlaneDepthBias);
-		half shadowNextCascade = NGSS_Main(coord, i.uv.xy, cascadeIndex + 1);
+		half shadowNextCascade = NGSS_Main(coord, receiverPlaneDepthBias, i.uv.xy, cascadeIndex + 1);
 		
 		//shadow = lerp(shadow, min(shadow, shadowNextCascade), alpha);//saturate(alpha)
 		shadow = lerp(shadow, shadowNextCascade, alpha);//saturate(alpha)
@@ -521,7 +676,7 @@ ENDCG
 
 // ----------------------------------------------------------------------------------------
 // Subshaders that does NGSS filterings while collecting shadows.
-// Compatible with: DX11, DX12, GLCORE, PS4, XB1, GLES3.0, SWITCH, Metal, Vulkan and equivalent SM3.0+ APIs
+// Compatible with: DX11, DX12, GLCORE, PS4, XB1, GLES3.0, SWITCH, Metal, Vulkan and equivalent SM3.0 and newer APIs
 
 //SM 3.0
 Subshader
@@ -536,7 +691,10 @@ Subshader
 		#pragma fragment frag_pcfSoft
 		#pragma shader_feature NGSS_PCSS_FILTER_DIR
 		#pragma shader_feature NGSS_USE_CASCADE_BLENDING
-		#pragma shader_feature NGSS_HARD_SHADOWS_DIR
+		//#pragma shader_feature NGSS_USE_EARLY_BAILOUT_OPTIMIZATION_DIR
+		//#pragma shader_feature NGSS_USE_BIAS_FADE_DIR
+		//#pragma shader_feature NGSS_HARD_SHADOWS_DIR
+		#pragma shader_feature NGSS_USE_RECEIVER_PLANE_BIAS
 		#pragma exclude_renderers gles d3d9
 		#pragma multi_compile_shadowcollector
 		#pragma target 3.0
@@ -561,7 +719,10 @@ Subshader
 		#pragma fragment frag_pcfSoft
 		#pragma shader_feature NGSS_PCSS_FILTER_DIR
 		#pragma shader_feature NGSS_USE_CASCADE_BLENDING
-		#pragma shader_feature NGSS_HARD_SHADOWS_DIR
+		//#pragma shader_feature NGSS_USE_EARLY_BAILOUT_OPTIMIZATION_DIR
+		//#pragma shader_feature NGSS_USE_BIAS_FADE_DIR		
+		//#pragma shader_feature NGSS_HARD_SHADOWS_DIR
+		#pragma shader_feature NGSS_USE_RECEIVER_PLANE_BIAS
 		#pragma exclude_renderers gles d3d9
 		#pragma multi_compile_shadowcollector
 		#pragma target 3.0
